@@ -1,0 +1,20 @@
+Source: crypted
+Section: libs
+Priority: optional
+Maintainer: Bardia Moshiri <bardia@furilabs.com>
+Build-Depends: debhelper-compat (= 13),
+               libglib2.0-dev,
+               libpolkit-gobject-1-dev (>= 121),
+               libcryptsetup-dev,
+               libdevmapper-dev,
+               systemd,
+Standards-Version: 4.7.2
+Vcs-Browser: https://github.com/furilabs/crypted
+Vcs-Git: https://github.com/furilabs/crypted.git
+
+Package: crypted
+Architecture: any
+Depends: ${misc:Depends},
+         ${shlibs:Depends},
+Description: Crypted encryption service
+ This service handles dm-crypt/LUKS encryption and ramdisk helpers

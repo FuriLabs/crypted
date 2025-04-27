@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=io.furios.Crypted
+Exec=/bin/false
+User=root
+SystemdService=crypted.service

@@ -1,0 +1,7 @@
+[Unit]
+Description=Crypted encryption service
+
+[Service]
+Type=dbus
+BusName=io.furios.Crypted
+ExecStart=/usr/sbin/crypted

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+<policyconfig>
+  <vendor>FuriOS Project</vendor>
+  <vendor_url>https://furilabs.com</vendor_url>
+
+  <action id="io.furios.Crypted.Encrypt">
+    <description>Start full-disk encryption</description>
+    <message>Authentication is required to start full-disk encryption</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.imply">io.furios.Crypted.RefreshStatus</annotate>
+  </action>
+
+  <action id="io.furios.Crypted.ChangePassword">
+    <description>Change encryption password</description>
+    <message>Authentication is required to change the encryption password</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.imply">io.furios.Crypted.RefreshStatus</annotate>
+  </action>
+
+  <action id="io.furios.Crypted.RefreshStatus">
+    <description>Refresh encryption status</description>
+    <message>System policy prevents refreshing encryption status</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

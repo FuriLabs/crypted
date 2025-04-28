@@ -132,68 +132,105 @@ cryptsetup_check_status(Crypted *self)
 gpointer
 cryptsetup_encryption_thread(Crypted *self)
 {
-    struct crypt_params_luks2 luks2_params;
-    struct crypt_params_reencrypt params;
+    struct crypt_params_luks2 luks2_params = {0};
+    struct crypt_params_reencrypt params = {0};
     int result;
 
     g_return_val_if_fail(self != NULL, NULL);
 
-    luks2_params = (struct crypt_params_luks2) {
-        .data_device = self->data_device,
-    };
+    g_debug("Starting encryption thread");
+    g_debug("Header device: %s", self->header_device);
+    g_debug("Data device: %s", self->data_device);
+    g_debug("Mapped name: %s", self->mapped_name);
 
-    params = (struct crypt_params_reencrypt) {
-        .resilience = "checksum",
-        .hash = "sha256",
-        .direction = CRYPT_REENCRYPT_FORWARD,
-        .mode = CRYPT_REENCRYPT_ENCRYPT,
-        .flags = CRYPT_REENCRYPT_INITIALIZE_ONLY,
-        .luks2 = &luks2_params,
-    };
+    /* Validate device paths before proceeding */
+    if (!self->header_device || !self->data_device) {
+        g_warning("Header or data device path is NULL");
+        crypted_set_status(self, CRYPTED_STATUS_FAILED);
+        goto out;
+    }
 
-    /* Open device if not already open */
+    /* Check if we can access the devices with proper permissions */
+    if (access(self->header_device, F_OK | W_OK) != 0) {
+        g_warning("Cannot access header device: %s", g_strerror(errno));
+        crypted_set_status(self, CRYPTED_STATUS_FAILED);
+        goto out;
+    }
+
+    if (access(self->data_device, F_OK | W_OK) != 0) {
+        g_warning("Cannot access data device: %s", g_strerror(errno));
+        crypted_set_status(self, CRYPTED_STATUS_FAILED);
+        goto out;
+    }
+
+    /* Set up LUKS2 parameters */
+    luks2_params.data_device = self->data_device;
+
+    /* Set up reencryption parameters with safe defaults */
+    params.resilience = "checksum";
+    params.hash = "sha256";
+    params.direction = CRYPT_REENCRYPT_FORWARD;
+    params.mode = CRYPT_REENCRYPT_ENCRYPT;
+    params.flags = CRYPT_REENCRYPT_INITIALIZE_ONLY;
+    params.luks2 = &luks2_params;
+
+    /* Initialize cryptsetup device if not already done */
     if (!self->crypt_device) {
+        g_debug("Initializing crypt device");
         result = crypt_init(&self->crypt_device, self->header_device);
         if (result < 0) {
-            g_warning("Failed to initialize cryptsetup device: %s", g_strerror(-result));
+            g_critical("Failed to initialize cryptsetup device: %s", g_strerror(-result));
             crypted_set_status(self, CRYPTED_STATUS_FAILED);
             goto out;
         }
     }
 
-    /* Set offset */
+    /* Set data offset to 0 for header device */
     result = crypt_set_data_offset(self->crypt_device, 0);
     if (result < 0) {
-        g_warning("Failed to set data offset: %s", g_strerror(-result));
+        g_debug("Failed to set data offset: %s", g_strerror(-result));
         crypted_set_status(self, CRYPTED_STATUS_FAILED);
         goto out;
     }
 
-    /* Set sector_size based on kernel support */
+    /* Check kernel support for sector size */
     if (SECTOR_SIZE_FORCE || (cryptsetup_get_supported_features() & DM_CRYPT_SECTOR_SIZE)) {
         luks2_params.sector_size = SECTOR_SIZE;
+        g_debug("Using sector size: %d", SECTOR_SIZE);
     } else {
         g_warning("Sector size not supported by kernel, falling back to 512");
         luks2_params.sector_size = 512;
     }
 
-    /* Format header */
+    /* Format LUKS2 header */
+    g_debug("format LUKS device with cipher: %s, mode: %s, sector_size: %d",
+            CIPHER, CIPHER_MODE, luks2_params.sector_size);
+
     result = crypt_format(self->crypt_device, CRYPT_LUKS2, CIPHER,
                           CIPHER_MODE, NULL, NULL, 512 / 8, &luks2_params);
+
     if (result < 0) {
-        g_warning("Failed to format LUKS device: %s", g_strerror(-result));
+        g_critical("Failed to format LUKS device: %s", g_strerror(-result));
         crypted_set_status(self, CRYPTED_STATUS_FAILED);
         goto out;
     }
 
-    /* Set persistent activation flags */
+    g_debug("Format successful, setting persistent flags");
+
+    /* Set persistent LUKS2 flags - failure is non-fatal */
     result = crypt_persistent_flags_set(self->crypt_device, CRYPT_FLAGS_ACTIVATION,
                                         CRYPT_ACTIVATE_ALLOW_DISCARDS);
-    /* Not fatal */
     if (result < 0)
         g_warning("Failed to set ALLOW_DISCARDS flag: %s", g_strerror(-result));
 
-    /* Create volume key */
+    /* Validate passphrase before adding keyslot */
+    if (!self->passphrase) {
+        g_warning("Passphrase is NULL");
+        crypted_set_status(self, CRYPTED_STATUS_FAILED);
+        goto out;
+    }
+
+    /* Add key to LUKS2 volume */
     result = crypt_keyslot_add_by_volume_key(self->crypt_device, CRYPT_ANY_SLOT, NULL,
                                              0, self->passphrase, strlen(self->passphrase));
     if (result < 0) {
@@ -202,7 +239,8 @@ cryptsetup_encryption_thread(Crypted *self)
         goto out;
     }
 
-    /* Initialize reencryption */
+    /* Initialize reencryption process */
+    g_debug("Initializing reencryption");
     result = crypt_reencrypt_init_by_passphrase(self->crypt_device, NULL,
                                                 self->passphrase, strlen(self->passphrase),
                                                 CRYPT_ANY_SLOT, 0,
@@ -238,27 +276,50 @@ cryptsetup_handle_encrypt(Crypted *self,
 
     g_mutex_lock(&self->encryption_process_mutex);
 
-    /* Check if encryption is already in progress or device is already encrypted */
+    /* Check if encryption is already in progress or device already encrypted */
     if (self->status != CRYPTED_STATUS_UNCONFIGURED) {
+        g_debug("Device is already encrypted or encryption is in progress: status=%d", self->status);
         g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
                                               "Device is already encrypted or encryption is in progress");
         g_mutex_unlock(&self->encryption_process_mutex);
         return TRUE;
     }
 
-    /* Check if encryption is supported */
+    /* Check if device supports encryption */
     if (!self->encryption_supported) {
+        g_debug("Encryption is not supported on this device");
         g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
                                               "Encryption is not supported on this device");
         g_mutex_unlock(&self->encryption_process_mutex);
         return TRUE;
     }
 
+    /* Validate device paths are properly initialized */
+    if (!self->header_device || !self->data_device || !self->mapped_name) {
+        g_warning("Device paths are not properly initialized");
+        g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+                                              "Internal error: device paths not properly initialized");
+        g_mutex_unlock(&self->encryption_process_mutex);
+        return TRUE;
+    }
+
+    /* Validate passphrase is not empty */
+    if (!passphrase || strlen(passphrase) == 0) {
+        g_debug("Empty passphrase provided");
+        g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+                                              "Empty passphrase not allowed");
+        g_mutex_unlock(&self->encryption_process_mutex);
+        return TRUE;
+    }
+
+    /* Update encryption status to configuring */
+    g_debug("Setting status to CONFIGURING");
     crypted_set_status(self, CRYPTED_STATUS_CONFIGURING);
 
     g_free(self->passphrase);
     self->passphrase = g_strdup(passphrase);
 
+    /* Start encryption in a separate thread to avoid blocking D-Bus */
     self->encryption_thread = g_thread_new("crypted_thread",
                                            (GThreadFunc) cryptsetup_encryption_thread,
                                            self);

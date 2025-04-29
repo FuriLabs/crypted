@@ -347,6 +347,11 @@ crypted_timeout_callback(gpointer user_data)
 
     g_return_val_if_fail(self != NULL, G_SOURCE_REMOVE);
 
+    if (self->should_quit) {
+        self->timeout_id = 0;
+        return G_SOURCE_REMOVE;
+    }
+
     /* Check if it's been more than 5 minutes since the last call */
     if ((g_get_monotonic_time() - self->last_call_timestamp) > 300 * 1000000) {
         /* Safety check for CONFIGURING / CONFIGURED status (service must not exit) */
@@ -359,6 +364,7 @@ crypted_timeout_callback(gpointer user_data)
         /* Time to exit */
         g_debug("Idle timeout reached, exiting...");
         self->should_quit = TRUE;
+        self->timeout_id = 0;
         g_main_context_wakeup(NULL);
         return G_SOURCE_REMOVE;
     }

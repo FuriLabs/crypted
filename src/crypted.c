@@ -175,8 +175,11 @@ crypted_set_status(Crypted *self, CryptedStatus status)
     g_return_if_fail(self != NULL);
 
     if (self->status != status) {
+        g_debug("Status changing from %d to %d", self->status, status);
         self->status = status;
         crypted_emit_properties_changed(self, "Status");
+    } else {
+        g_debug("Status unchanged: %d", status);
     }
 }
 

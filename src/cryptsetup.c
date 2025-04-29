@@ -32,10 +32,9 @@ cryptsetup_get_supported_features(void)
         last_target = target;
 
         if (strcmp("crypt", target->name) == 0) {
-            if (target->version[0] >= 1 && target->version[1] >= 17) {
+            if (target->version[0] >= 1 && target->version[1] >= 17)
                 /* sector_size supported */
                 flags |= DM_CRYPT_SECTOR_SIZE;
-            }
         }
 
         target = (void *)target + target->next;
@@ -134,6 +133,7 @@ cryptsetup_encryption_thread(Crypted *self)
 {
     struct crypt_params_luks2 luks2_params = {0};
     struct crypt_params_reencrypt params = {0};
+    struct crypt_device *local_crypt_device = NULL;
     int result;
 
     g_return_val_if_fail(self != NULL, NULL);
@@ -174,23 +174,21 @@ cryptsetup_encryption_thread(Crypted *self)
     params.flags = CRYPT_REENCRYPT_INITIALIZE_ONLY;
     params.luks2 = &luks2_params;
 
-    /* Initialize cryptsetup device if not already done */
-    if (!self->crypt_device) {
-        g_debug("Initializing crypt device");
-        result = crypt_init(&self->crypt_device, self->header_device);
-        if (result < 0) {
-            g_critical("Failed to initialize cryptsetup device: %s", g_strerror(-result));
-            crypted_set_status(self, CRYPTED_STATUS_FAILED);
-            goto out;
-        }
+    /* Initialize a local cryptsetup device instead of using shared one */
+    g_debug("Initializing crypt device");
+    result = crypt_init(&local_crypt_device, self->header_device);
+    if (result < 0 || local_crypt_device == NULL) {
+        g_critical("Failed to initialize cryptsetup device: %s", g_strerror(-result));
+        crypted_set_status(self, CRYPTED_STATUS_FAILED);
+        goto out;
     }
 
     /* Set data offset to 0 for header device */
-    result = crypt_set_data_offset(self->crypt_device, 0);
+    result = crypt_set_data_offset(local_crypt_device, 0);
     if (result < 0) {
         g_debug("Failed to set data offset: %s", g_strerror(-result));
         crypted_set_status(self, CRYPTED_STATUS_FAILED);
-        goto out;
+        goto out_free_crypt;
     }
 
     /* Check kernel support for sector size */
@@ -206,63 +204,81 @@ cryptsetup_encryption_thread(Crypted *self)
     g_debug("format LUKS device with cipher: %s, mode: %s, sector_size: %d",
             CIPHER, CIPHER_MODE, luks2_params.sector_size);
 
-    result = crypt_format(self->crypt_device, CRYPT_LUKS2, CIPHER,
+    result = crypt_format(local_crypt_device, CRYPT_LUKS2, CIPHER,
                           CIPHER_MODE, NULL, NULL, 512 / 8, &luks2_params);
 
     if (result < 0) {
         g_critical("Failed to format LUKS device: %s", g_strerror(-result));
         crypted_set_status(self, CRYPTED_STATUS_FAILED);
-        goto out;
+        goto out_free_crypt;
     }
 
     g_debug("Format successful, setting persistent flags");
 
     /* Set persistent LUKS2 flags - failure is non-fatal */
-    result = crypt_persistent_flags_set(self->crypt_device, CRYPT_FLAGS_ACTIVATION,
+    result = crypt_persistent_flags_set(local_crypt_device, CRYPT_FLAGS_ACTIVATION,
                                         CRYPT_ACTIVATE_ALLOW_DISCARDS);
     if (result < 0)
         g_warning("Failed to set ALLOW_DISCARDS flag: %s", g_strerror(-result));
+
+    g_mutex_lock(&self->encryption_process_mutex);
 
     /* Validate passphrase before adding keyslot */
     if (!self->passphrase) {
         g_warning("Passphrase is NULL");
         crypted_set_status(self, CRYPTED_STATUS_FAILED);
-        goto out;
+        g_mutex_unlock(&self->encryption_process_mutex);
+        goto out_free_crypt;
     }
 
+    /* Make a local copy of the passphrase */
+    char *passphrase_copy = g_strdup(self->passphrase);
+    size_t passphrase_len = strlen(passphrase_copy);
+
+    /* Unlock mutex after copying passphrase */
+    g_mutex_unlock(&self->encryption_process_mutex);
+
     /* Add key to LUKS2 volume */
-    result = crypt_keyslot_add_by_volume_key(self->crypt_device, CRYPT_ANY_SLOT, NULL,
-                                             0, self->passphrase, strlen(self->passphrase));
+    result = crypt_keyslot_add_by_volume_key(local_crypt_device, CRYPT_ANY_SLOT, NULL,
+                                             0, passphrase_copy, passphrase_len);
     if (result < 0) {
         g_warning("Failed to add keyslot: %s", g_strerror(-result));
         crypted_set_status(self, CRYPTED_STATUS_FAILED);
-        goto out;
+        g_free(passphrase_copy);
+        goto out_free_crypt;
     }
 
     /* Initialize reencryption process */
     g_debug("Initializing reencryption");
-    result = crypt_reencrypt_init_by_passphrase(self->crypt_device, NULL,
-                                                self->passphrase, strlen(self->passphrase),
+    result = crypt_reencrypt_init_by_passphrase(local_crypt_device, NULL,
+                                                passphrase_copy, passphrase_len,
                                                 CRYPT_ANY_SLOT, 0,
                                                 CIPHER, CIPHER_MODE,
                                                 &params);
+
+    memset(passphrase_copy, 0, passphrase_len);
+    g_free(passphrase_copy);
+
     if (result < 0) {
         g_warning("Failed to initialize reencryption: %s", g_strerror(-result));
         crypted_set_status(self, CRYPTED_STATUS_FAILED);
-        goto out;
+        goto out_free_crypt;
     }
 
     g_debug("Encryption initialized successfully");
     crypted_set_status(self, CRYPTED_STATUS_CONFIGURED);
 
+out_free_crypt:
+    if (local_crypt_device)
+        crypt_free(local_crypt_device);
 out:
-    if (self->crypt_device) {
-        crypt_free(self->crypt_device);
-        self->crypt_device = NULL;
+    g_mutex_lock(&self->encryption_process_mutex);
+    if (self->passphrase) {
+        memset(self->passphrase, 0, strlen(self->passphrase));
+        g_free(self->passphrase);
+        self->passphrase = NULL;
     }
-
-    g_free(self->passphrase);
-    self->passphrase = NULL;
+    g_mutex_unlock(&self->encryption_process_mutex);
 
     return NULL;
 }
@@ -319,14 +335,17 @@ cryptsetup_handle_encrypt(Crypted *self,
     g_free(self->passphrase);
     self->passphrase = g_strdup(passphrase);
 
-    /* Start encryption in a separate thread to avoid blocking D-Bus */
+    /* First respond to D-Bus client */
+    g_dbus_method_invocation_return_value(invocation, NULL);
+
+    /* Then start encryption in a separate thread */
+    g_debug("Creating encryption thread");
     self->encryption_thread = g_thread_new("crypted_thread",
                                            (GThreadFunc) cryptsetup_encryption_thread,
                                            self);
 
     g_mutex_unlock(&self->encryption_process_mutex);
 
-    g_dbus_method_invocation_return_value(invocation, NULL);
     return TRUE;
 }
 

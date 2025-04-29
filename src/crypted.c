@@ -357,7 +357,7 @@ crypted_timeout_callback(gpointer user_data)
         /* Safety check for CONFIGURING / CONFIGURED status (service must not exit) */
         if (self->status == CRYPTED_STATUS_CONFIGURING ||
             self->status == CRYPTED_STATUS_CONFIGURED) {
-            g_warning("Service will remain in background due to configuring/configured status");
+            g_debug("Service will remain in background due to configuring/configured status");
             return G_SOURCE_CONTINUE;
         }
 

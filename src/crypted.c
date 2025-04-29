@@ -30,6 +30,54 @@ const gchar introspection_xml[] =
 "</node>";
 
 void
+crypted_save_state(Crypted *self)
+{
+    GError *error = NULL;
+    gchar *content = NULL;
+
+    g_return_if_fail(self != NULL);
+
+    content = g_strdup_printf("%d", self->status);
+
+    if (!g_file_set_contents(ENCRYPTION_STATE_FILE, content, -1, &error)) {
+        g_warning("Failed to save encryption state: %s", error->message);
+        g_error_free(error);
+    } else {
+        g_debug("Saved encryption state: %d", self->status);
+    }
+
+    g_free(content);
+}
+
+void
+crypted_load_state(Crypted *self)
+{
+    GError *error = NULL;
+    gchar *content = NULL;
+    gint state;
+
+    g_return_if_fail(self != NULL);
+
+    if (!g_file_get_contents(ENCRYPTION_STATE_FILE, &content, NULL, &error)) {
+        if (!g_error_matches(error, G_FILE_ERROR, G_FILE_ERROR_NOENT))
+            g_warning("Failed to load encryption state: %s", error->message);
+        g_clear_error(&error);
+        return;
+    }
+
+    state = atoi(content);
+    g_free(content);
+
+    if (state >= CRYPTED_STATUS_UNKNOWN && state <= CRYPTED_STATUS_FAILED) {
+        /* Only set status if it's CONFIGURING or CONFIGURED */
+        if (state == CRYPTED_STATUS_CONFIGURING || state == CRYPTED_STATUS_CONFIGURED) {
+            g_debug("Loaded encryption state: %d", state);
+            crypted_set_status(self, state);
+        }
+    }
+}
+
+void
 crypted_register_timestamp(Crypted *self)
 {
     g_return_if_fail(self != NULL);
@@ -174,10 +222,16 @@ crypted_set_status(Crypted *self, CryptedStatus status)
 {
     g_return_if_fail(self != NULL);
 
+    /* Only change status if it's different */
     if (self->status != status) {
         g_debug("Status changing from %d to %d", self->status, status);
         self->status = status;
         crypted_emit_properties_changed(self, "Status");
+
+        /* Save the state for persistence */
+        if (status == CRYPTED_STATUS_CONFIGURING ||
+            status == CRYPTED_STATUS_CONFIGURED)
+            crypted_save_state(self);
     } else {
         g_debug("Status unchanged: %d", status);
     }
@@ -259,7 +313,13 @@ on_bus_acquired(GDBusConnection *connection, const gchar *name, Crypted *self)
 
     /* Check initial device status */
     crypted_detect_devices(self);
-    crypted_set_status(self, cryptsetup_check_status(self));
+
+    /* Load encryption state from disk if available */
+    crypted_load_state(self);
+
+    /* Only check status if we don't have a saved state */
+    if (self->status == CRYPTED_STATUS_UNKNOWN)
+        crypted_set_status(self, cryptsetup_check_status(self));
 }
 
 void

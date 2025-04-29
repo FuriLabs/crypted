@@ -16,6 +16,7 @@
 #define DROIDIAN_HEADER_PATH "/dev/droidian/droidian-reserved"
 #define DROIDIAN_ROOTFS_PATH "/dev/droidian/droidian-rootfs"
 #define DROIDIAN_ENCRYPTED_NAME "droidian_encrypted"
+#define ENCRYPTION_STATE_FILE "/run/crypted-state"
 
 /* Encryption settings */
 #define CIPHER "aes"

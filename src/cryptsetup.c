@@ -54,12 +54,27 @@ cryptsetup_check_status(Crypted *self)
     crypt_status_info cryptsetup_status;
     crypt_reencrypt_info reencrypt_status;
     int result;
+    gchar *content = NULL;
+    GError *error = NULL;
 
     g_return_val_if_fail(self != NULL, CRYPTED_STATUS_UNKNOWN);
 
     /* Check if encryption is supported at all */
     if (!self->encryption_supported)
         return CRYPTED_STATUS_UNSUPPORTED;
+
+    /* Check if we have a persistent state file */
+    if (g_file_get_contents(ENCRYPTION_STATE_FILE, &content, NULL, NULL)) {
+        int saved_status = atoi(content);
+        g_free(content);
+
+        /* If we previously saved CONFIGURING or CONFIGURED state, respect it */
+        if (saved_status == CRYPTED_STATUS_CONFIGURING ||
+            saved_status == CRYPTED_STATUS_CONFIGURED) {
+            g_debug("Using saved state: %d", saved_status);
+            return (CryptedStatus)saved_status;
+        }
+    }
 
     /* Check if encryption is in progress */
     if (access(ENCRYPTION_HELPER_PIDFILE, F_OK) == 0)

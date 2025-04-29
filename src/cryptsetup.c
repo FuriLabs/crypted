@@ -77,12 +77,16 @@ cryptsetup_check_status(Crypted *self)
     }
 
     /* Check if encryption is in progress */
-    if (access(ENCRYPTION_HELPER_PIDFILE, F_OK) == 0)
+    if (access(ENCRYPTION_HELPER_PIDFILE, F_OK) == 0) {
+        g_debug("Found helper PID file, assuming encryption is in progress");
         return CRYPTED_STATUS_ENCRYPTING;
+    }
 
     /* Check if encryption failed */
-    if (access(ENCRYPTION_HELPER_FAILURE, F_OK) == 0)
+    if (access(ENCRYPTION_HELPER_FAILURE, F_OK) == 0) {
+        g_debug("Found helper failure file, assuming encryption failed");
         return CRYPTED_STATUS_FAILED;
+    }
 
     /* Open the device and check status */
     if (self->crypt_device == NULL) {

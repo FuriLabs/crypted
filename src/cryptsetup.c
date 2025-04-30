@@ -60,8 +60,16 @@ cryptsetup_check_status(Crypted *self)
     g_return_val_if_fail(self != NULL, CRYPTED_STATUS_UNKNOWN);
 
     /* Check if encryption is supported at all */
-    if (!self->encryption_supported)
+    if (!self->encryption_supported) {
+        g_debug("Encryption not supported");
         return CRYPTED_STATUS_UNSUPPORTED;
+    }
+
+    /* Check if device paths are valid */
+    if (!self->header_device || !self->data_device || !self->mapped_name) {
+        g_debug("Device paths not properly set");
+        return CRYPTED_STATUS_UNKNOWN;
+    }
 
     /* Check if we have a persistent state file */
     if (g_file_get_contents(ENCRYPTION_STATE_FILE, &content, NULL, NULL)) {
@@ -95,18 +103,24 @@ cryptsetup_check_status(Crypted *self)
         if (result < 0)
             return CRYPTED_STATUS_UNCONFIGURED;
 
-        /* Try to load the LUKS header */
+        /* Try to load the LUKS header, first try LUKS2 */
         result = crypt_load(self->crypt_device, CRYPT_LUKS2, NULL);
         if (result < 0) {
-            /* No valid LUKS header, device is unconfigured */
-            crypt_free(self->crypt_device);
-            self->crypt_device = NULL;
-            return CRYPTED_STATUS_UNCONFIGURED;
+            /* Try LUKS1 as fallback */
+            result = crypt_load(self->crypt_device, CRYPT_LUKS1, NULL);
+            if (result < 0) {
+                crypt_free(self->crypt_device);
+                self->crypt_device = NULL;
+                return CRYPTED_STATUS_UNCONFIGURED;
+            }
         }
     }
 
     /* Check device activation status */
     cryptsetup_status = crypt_status(self->crypt_device, self->mapped_name);
+
+    g_debug("Device '%s' status: %d", self->mapped_name, cryptsetup_status);
+    g_debug("Header device: %s, Data device: %s", self->header_device, self->data_device);
 
     switch (cryptsetup_status) {
         case CRYPT_INVALID:

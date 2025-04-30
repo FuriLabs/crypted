@@ -253,35 +253,96 @@ crypted_detect_devices(Crypted *self)
 {
     g_return_if_fail(self != NULL);
 
-    /* Check FuriOS paths first */
-    if (access(FURIOS_HEADER_PATH, F_OK) == 0 &&
-        access(FURIOS_ROOTFS_PATH, F_OK) == 0) {
+    gboolean furios_paths_exist = FALSE;
+    gboolean droidian_paths_exist = FALSE;
+    gboolean furios_encrypted_exists = FALSE;
+    gboolean droidian_encrypted_exists = FALSE;
+
+    furios_paths_exist = (access(FURIOS_HEADER_PATH, F_OK) == 0 &&
+                          access(FURIOS_ROOTFS_PATH, F_OK) == 0);
+
+    droidian_paths_exist = (access(DROIDIAN_HEADER_PATH, F_OK) == 0 &&
+                            access(DROIDIAN_ROOTFS_PATH, F_OK) == 0);
+
+    furios_encrypted_exists = (access("/dev/mapper/furios_encrypted", F_OK) == 0);
+    droidian_encrypted_exists = (access("/dev/mapper/droidian_encrypted", F_OK) == 0);
+
+    /* FuriOS encrypted exists, determine which paths to use */
+    if (furios_encrypted_exists) {
+        g_debug("Found furios_encrypted device");
+        self->mapped_name = g_strdup("furios_encrypted");
+
+        /* Prefer matching paths if available */
+        if (furios_paths_exist) {
+            self->header_device = g_strdup(FURIOS_HEADER_PATH);
+            self->data_device = g_strdup(FURIOS_ROOTFS_PATH);
+            g_debug("Using FuriOS paths with furios_encrypted");
+        } else if (droidian_paths_exist) {
+            self->header_device = g_strdup(DROIDIAN_HEADER_PATH);
+            self->data_device = g_strdup(DROIDIAN_ROOTFS_PATH);
+            g_debug("Using Droidian paths with furios_encrypted");
+        } else {
+            g_debug("Found furios_encrypted but no valid paths");
+            goto no_valid_config;
+        }
+
+        crypted_set_encryption_supported(self, TRUE);
+        return;
+    }
+
+    /* Droidian encrypted exists, determine which paths to use */
+    if (droidian_encrypted_exists) {
+        g_debug("Found droidian_encrypted device");
+        self->mapped_name = g_strdup("droidian_encrypted");
+
+        /* Prefer matching paths if available */
+        if (droidian_paths_exist) {
+            self->header_device = g_strdup(DROIDIAN_HEADER_PATH);
+            self->data_device = g_strdup(DROIDIAN_ROOTFS_PATH);
+            g_debug("Using Droidian paths with droidian_encrypted");
+        } else if (furios_paths_exist) {
+            self->header_device = g_strdup(FURIOS_HEADER_PATH);
+            self->data_device = g_strdup(FURIOS_ROOTFS_PATH);
+            g_debug("Using FuriOS paths with droidian_encrypted");
+        } else {
+            g_warning("Found droidian_encrypted but no valid paths");
+            goto no_valid_config;
+        }
+
+        crypted_set_encryption_supported(self, TRUE);
+        return;
+    }
+
+    /* No encrypted device exists yet, but we have valid paths
+     * In this case, set up for potential encryption */
+    if (furios_paths_exist) {
         self->header_device = g_strdup(FURIOS_HEADER_PATH);
         self->data_device = g_strdup(FURIOS_ROOTFS_PATH);
         self->mapped_name = g_strdup(FURIOS_ENCRYPTED_NAME);
         crypted_set_encryption_supported(self, TRUE);
-        g_debug("FuriOS path detected");
+        g_debug("No encrypted device found, using FuriOS paths and name");
         return;
     }
 
-    /* Then check legacy Droidian paths */
-    if (access(DROIDIAN_HEADER_PATH, F_OK) == 0 &&
-        access(DROIDIAN_ROOTFS_PATH, F_OK) == 0) {
+    if (droidian_paths_exist) {
         self->header_device = g_strdup(DROIDIAN_HEADER_PATH);
         self->data_device = g_strdup(DROIDIAN_ROOTFS_PATH);
         self->mapped_name = g_strdup(DROIDIAN_ENCRYPTED_NAME);
         crypted_set_encryption_supported(self, TRUE);
-        g_debug("legacy Droidian path detected");
+        g_debug("No encrypted device found, using Droidian paths and name");
         return;
     }
 
-    /* Neither exists, encryption not supported */
+no_valid_config:
+    /* No valid configuration found */
     self->header_device = NULL;
     self->data_device = NULL;
     self->mapped_name = NULL;
+
     crypted_set_encryption_supported(self, FALSE);
     crypted_set_status(self, CRYPTED_STATUS_UNSUPPORTED);
-    g_debug("No compatible path detected, encryption not supported");
+
+    g_debug("No compatible configuration detected, encryption not supported");
 }
 
 void

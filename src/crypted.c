@@ -559,7 +559,7 @@ handle_unix_signal(gpointer user_data)
 
     g_return_val_if_fail(self != NULL, G_SOURCE_REMOVE);
 
-    g_warning("Received termination signal, exiting...");
+    g_debug("Received termination signal, exiting...");
 
     self->should_quit = TRUE;
     g_main_context_wakeup(NULL);

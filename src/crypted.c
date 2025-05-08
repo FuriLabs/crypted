@@ -26,6 +26,12 @@ const gchar introspection_xml[] =
 "    </method>"
 "    <property name='Status' type='u' access='read'/>"
 "    <property name='EncryptionSupported' type='b' access='read'/>"
+"    <property name='Cipher' type='s' access='read'/>"
+"    <property name='CipherMode' type='s' access='read'/>"
+"    <property name='SectorSize' type='u' access='read'/>"
+"    <property name='RootFSPath' type='s' access='read'/>"
+"    <property name='HeaderPath' type='s' access='read'/>"
+"    <property name='EncryptedName' type='s' access='read'/>"
 "  </interface>"
 "</node>";
 
@@ -148,6 +154,18 @@ handle_get_property(GDBusConnection *connection,
         return g_variant_new_uint32((guint32)self->status);
     else if (g_strcmp0(property_name, "EncryptionSupported") == 0)
         return g_variant_new_boolean(self->encryption_supported);
+    else if (g_strcmp0(property_name, "Cipher") == 0)
+        return g_variant_new_string(CIPHER);
+    else if (g_strcmp0(property_name, "CipherMode") == 0)
+        return g_variant_new_string(CIPHER_MODE);
+    else if (g_strcmp0(property_name, "SectorSize") == 0)
+        return g_variant_new_uint32(SECTOR_SIZE);
+    else if (g_strcmp0(property_name, "RootFSPath") == 0)
+        return g_variant_new_string(self->data_device);
+    else if (g_strcmp0(property_name, "HeaderPath") == 0)
+        return g_variant_new_string(self->header_device);
+    else if (g_strcmp0(property_name, "EncryptedName") == 0)
+        return g_variant_new_string(self->mapped_name);
 
     g_set_error(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_PROPERTY,
                 "Property %s not found", property_name);
@@ -253,6 +271,9 @@ crypted_detect_devices(Crypted *self)
 {
     g_return_if_fail(self != NULL);
 
+    self->mapped_name = g_strdup("");
+    self->data_device = g_strdup("");
+    self->header_device = g_strdup("");
     gboolean furios_paths_exist = FALSE;
     gboolean droidian_paths_exist = FALSE;
     gboolean furios_encrypted_exists = FALSE;
@@ -335,10 +356,6 @@ crypted_detect_devices(Crypted *self)
 
 no_valid_config:
     /* No valid configuration found */
-    self->header_device = NULL;
-    self->data_device = NULL;
-    self->mapped_name = NULL;
-
     crypted_set_encryption_supported(self, FALSE);
     crypted_set_status(self, CRYPTED_STATUS_UNSUPPORTED);
 

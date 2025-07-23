@@ -25,7 +25,7 @@ $(TARGET_HELPER):
 clean:
 	rm -f $(TARGET) $(TARGET_HELPER)
 
-install:
+install: all
 	install -d $(DESTDIR)$(PREFIX)/sbin
 	install -m 755 $(TARGET) $(DESTDIR)$(PREFIX)/sbin
 	install -m 755 $(TARGET_HELPER) $(DESTDIR)$(PREFIX)/sbin

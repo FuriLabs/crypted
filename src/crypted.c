@@ -271,9 +271,14 @@ crypted_detect_devices(Crypted *self)
 {
     g_return_if_fail(self != NULL);
 
-    self->mapped_name = g_strdup("");
-    self->data_device = g_strdup("");
-    self->header_device = g_strdup("");
+    g_free(self->mapped_name);
+    g_free(self->data_device);
+    g_free(self->header_device);
+
+    self->mapped_name = NULL;
+    self->data_device = NULL;
+    self->header_device = NULL;
+
     gboolean furios_paths_exist = FALSE;
     gboolean droidian_paths_exist = FALSE;
     gboolean furios_encrypted_exists = FALSE;
@@ -356,6 +361,10 @@ crypted_detect_devices(Crypted *self)
 
 no_valid_config:
     /* No valid configuration found */
+    self->mapped_name = g_strdup("");
+    self->data_device = g_strdup("");
+    self->header_device = g_strdup("");
+
     crypted_set_encryption_supported(self, FALSE);
     crypted_set_status(self, CRYPTED_STATUS_UNSUPPORTED);
 
